@@ -2,6 +2,9 @@
     
     <arg name="fiducial_len" default="0.0982"/>
 
+    <!-- Docking status -->
+    <param name="/docking_status" value="undocked"/>  
+
     <!-- Run the Pi Camera at low resolution -->
     <include file="$(find raspicam_node)/launch/camerav2_410x308_30fps.launch" />
 
@@ -29,6 +32,8 @@
 
     <node pkg="magni_docking" type="fiducial_docking_server"
             name="fiducial_docking_server" output="screen" respawn="false">
+        <!-- Maximum distance a fiducial can be away for the robot to attempt to dock -->
+        <!-- <param name="~max_distance" value=3.0/> -->
     </node>
 
     <!-- Only for testing purpose, remove later -->
