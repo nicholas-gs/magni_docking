@@ -1,0 +1,39 @@
+<launch>
+    
+    <arg name="fiducial_len" default="0.0982"/>
+
+    <!-- Run the Pi Camera at low resolution -->
+    <include file="$(find raspicam_node)/launch/camerav2_410x308_30fps.launch" />
+
+    <!-- We want aruco detect to give us the 6DOF pose,
+    not just the pixel coordinates of the vertices -->
+    <arg name="do_pose_estimation" default="true"/>
+
+    <!-- Run aruco_detect with special parameters to optimize for speed -->
+    <node pkg="aruco_detect" name="aruco_detect"
+        type="aruco_detect" respawn="false">
+        <param name="image_transport" value="compressed"/>
+        <param name="publish_images" value="true" />
+        <param name="fiducial_len" value="$(arg fiducial_len)"/>
+        <param name="do_pose_estimation" value="$(arg do_pose_estimation)"/>
+        <param name="adaptiveThreshWinSizeStep" value="8" />
+        <param name="adaptiveThreshWinSizeMin" value="10" />
+        <param name="adaptiveThreshWinSizeMax" value="50" />
+        <param name="doCornerRefinement" value="False" />
+        <param name="do_tracking" value="false" />
+        <param name="num_threads" value="3" />
+        <remap from="/camera/compressed"
+            to="/raspicam_node/image/compressed"/>
+        <remap from="/camera_info" to="/raspicam_node/camera_info"/>
+    </node>
+
+    <node pkg="magni_docking" type="fiducial_docking_server"
+            name="fiducial_docking_server" output="screen" respawn="false">
+    </node>
+
+    <!-- Only for testing purpose, remove later -->
+     <node pkg="magni_docking" type="fiducial_docking_client"
+            name="fiducial_docking_client" output="screen" respawn="false">
+     </node>
+
+</launch>
