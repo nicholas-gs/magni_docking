@@ -1,14 +1,19 @@
 #include "actionlib/server/simple_action_server.h"
 #include "fiducial_msgs/FiducialTransformArray.h"
 #include "geometry_msgs/Twist.h"
+#include "geometry_msgs/TransformStamped.h"
+#include "geometry_msgs/Quaternion.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.h"
 #include "magni_docking/DockingAction.h"
 #include "ros/ros.h"
 #include "tf2_ros/transform_listener.h"
+#include "tf2/LinearMath/Quaternion.h"
+#include "tf2/LinearMath/Matrix3x3.h"
 
 #include <string>
 #include <vector>
 
-namespace impl {
+namespace magni_docking_impl {
 
     enum class Docking_State_Type { undocked,
                                     searching,
@@ -44,6 +49,17 @@ namespace impl {
         }
     }
 
+    // Calculate the relative degrees of rotation between 2 coordinate frames
+    double degreesOfRotation(geometry_msgs::TransformStamped& benchmark_tf, geometry_msgs::TransformStamped& current_tf) {
+        tf2::Quaternion benchmark_quat, current_quat;
+        tf2::convert(benchmark_tf.transform.rotation, benchmark_quat);
+        tf2::convert(current_tf.transform.rotation, current_quat);
+        tf2::Quaternion diff = benchmark_quat * current_quat.inverse();
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(diff).getRPY(roll, pitch, yaw);
+        return yaw;
+    }
+
 } // namespace impl
 
 // The business logic of docking the robot
@@ -57,14 +73,46 @@ class DockingController {
 
     // Search for the target fiducial
     bool searchForFiducial() {
-        ROS_INFO("Searching for %d fiducial", static_cast<int>(m_Target_Fid));
-        // Rotate the robot 360 degress or until fiducial is found
+        ROS_INFO("Searching for %d fiducial", m_Target_Fid);
+        // Rotate the robot for a fixed angle or until fiducial is found
+        // Send Twist message to start rotation
+        geometry_msgs::Twist twist;
+        twist.angular.z = 0.1;
+        magni_docking_impl::m_CmdPub.publish(twist);
+        // Get the current transform between the /map and /base_link frames
+        geometry_msgs::TransformStamped benchmark_tf;
+        getMapToBaseLinkTF(benchmark_tf);
+        // Maximum rotation in terms of degrees
+        double max_rotation = 300.0;
+        geometry_msgs::TransformStamped current_tf = benchmark_tf;
+        ros::Rate r(0.5);
+        while(!m_Fiducial_Found && (magni_docking_impl::degreesOfRotation(benchmark_tf, current_tf) < max_rotation)) {
+            r.sleep();
+            getMapToBaseLinkTF(current_tf);
+        }
 
         // Test only to simulate 360 degree rotation, remove later
         ros::Time later = ros::Time::now() + ros::Duration(10);
         while ((later - ros::Time::now()).toSec() > 0) {
         }
         return m_Fiducial_Found;
+    }
+
+    // Get the transform between the /map and /base_link frames
+    bool getMapToBaseLinkTF(geometry_msgs::TransformStamped& ts) {
+        std::size_t i = 0;
+        ros::Rate r(0.1);
+        while(i < 3) {
+            try {
+                ts = m_TFBuffer.lookupTransform("map", "base_link", ros::Time(0));
+                return true;
+            } catch (tf2::TransformException& exp) {
+                r.sleep();
+                i++;
+                continue;
+            }
+        }
+        return false;
     }
 
   private:
@@ -78,10 +126,11 @@ class DockingController {
     tf2_ros::Buffer m_TFBuffer;
     tf2_ros::TransformListener m_TFListener;
 
+
     // Fiducial Transforms topic subscriber callback
     void FidTfCallback(const fiducial_msgs::FiducialTransformArray::ConstPtr& msg) {
         // If we are currently searching for the target fiducial
-        if (impl::docking_state == impl::Docking_State_Type::searching) {
+        if (magni_docking_impl::docking_state == magni_docking_impl::Docking_State_Type::searching) {
             search(msg);
         }
     }
@@ -99,6 +148,7 @@ class DockingController {
     }
 };
 
+// Action Server
 class DockingActionServer {
   public:
     DockingActionServer(ros::NodeHandle& nh, const std::string& name)
@@ -121,13 +171,13 @@ class DockingActionServer {
     // Callback when a goal is received by action server
     void goalCallback(const magni_docking::DockingGoalConstPtr& goal) {
         // Check if Magni is already docked. If it is, then do nothing
-        if(impl::getDockingStatus() == std::string("docked")) {
+        if(magni_docking_impl::getDockingStatus() == std::string("docked")) {
             ROS_INFO("Magni already docked!");
             m_Result.success = true;
             m_AS.setSucceeded(m_Result);
             return;
         } else {
-            impl::docking_state = impl::Docking_State_Type::undocked;
+            magni_docking_impl::docking_state = magni_docking_impl::Docking_State_Type::undocked;
         }
         // Pass of responsibility of docking the robot to the docking controller
         // Search for the target fiducial
@@ -135,7 +185,7 @@ class DockingActionServer {
         DockingController dc(target_fid, m_NH);
         sendFeedback("searching");
         // If target fiducial could not be found, then abort
-        impl::docking_state = impl::Docking_State_Type::searching;
+        magni_docking_impl::docking_state = magni_docking_impl::Docking_State_Type::searching;
         if (!dc.searchForFiducial()) {
             sendFeedback("fiducial not found");
             m_Result.success = false;
@@ -144,7 +194,7 @@ class DockingActionServer {
         }
 
         // Successfully docked
-        impl::docking_state = impl::Docking_State_Type::docked;
+        magni_docking_impl::docking_state = magni_docking_impl::Docking_State_Type::docked;
         ros::param::set("/docking_status", "docked");
         m_Result.success = true;
         m_AS.setSucceeded(m_Result);
@@ -160,7 +210,7 @@ class DockingActionServer {
 int main(int argc, char** argv) {
     ros::init(argc, argv, "magni_docking");
     ros::NodeHandle nh;
-    impl::init(nh);
+    magni_docking_impl::init(nh);
     DockingActionServer das(nh, "magni_docking");
     ros::spin();
     return 0;
