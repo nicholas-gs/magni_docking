@@ -32,8 +32,11 @@
 
     <node pkg="magni_docking" type="fiducial_docking_server"
             name="fiducial_docking_server" output="screen" respawn="false">
-        <!-- Maximum distance a fiducial can be away for the robot to attempt to dock -->
-        <!-- <param name="~max_distance" value=3.0/> -->
+            <!-- Relative position of the dock with respect to the initial position of the robot -->
+            <param name="~dock_position" value="left"/>
+            <param name="~linear_vel" value="0.3" type="double"/>
+            <param name="~angular_vel" value="0.3" type="double"/>
+            <param name="~search_angle" value="2.79" type="double"/>
     </node>
 
     <!-- Only for testing purpose, remove later -->
