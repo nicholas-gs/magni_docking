@@ -90,7 +90,7 @@ class DockingController {
   public:
     DockingController(int32_t target_fid, ros::NodeHandle& nh)
         :   m_Target_Fid(target_fid),
-            m_FidTfSub(nh.subscribe("fiducial_transform", 1, &DockingController::FidTfCallback, this)),
+            m_FidTfSub(nh.subscribe("fiducial_transforms", 1, &DockingController::FidTfCallback, this)),
             m_TFListener(m_TFBuffer) {
     }
 
@@ -128,21 +128,14 @@ class DockingController {
 
     // Get the transform between the /map and /base_link frames
     bool getOdomToBaseLinkTF(geometry_msgs::TransformStamped& ts) {
-        std::size_t i = 0;
-        ros::Rate r(0.2);
         std::string odom = "odom";
         std::string base_link = "base_link";
-        while(i < 3) {
-            try {
-                ts = m_TFBuffer.lookupTransform(odom, base_link, ros::Time(0));
-                return true;
-            } catch (tf2::TransformException& exp) {
-                r.sleep();
-                i++;
-                continue;
-            }
+        try {
+            ts = m_TFBuffer.lookupTransform(odom, base_link, ros::Time::now(), ros::Duration(2.0));
+            return true;
+        } catch (tf2::TransformException& exp) {
+            ROS_ERROR("Cannot find transform %s and %s", odom.c_str(), base_link.c_str());
         }
-        ROS_ERROR("Cannot find transform %s and %s", odom.c_str(), base_link.c_str());
         return false;
     }
 
@@ -173,7 +166,6 @@ class DockingController {
             const fiducial_msgs::FiducialTransform& ft = msg->transforms[i];
             if (ft.fiducial_id == m_Target_Fid) {
                 m_Fiducial_Found = true;
-                ROS_INFO("Target fiducial %d has been found", m_Target_Fid);
                 break;
             }
         }
