@@ -219,11 +219,13 @@ class DockingActionServer {
         // If target fiducial could not be found, then abort
         magni_docking_impl::docking_state = magni_docking_impl::Docking_State_Type::searching;
         if (!dc.searchForFiducial()) {
-            sendFeedback("fiducial not found");
+            sendFeedback("Fiducial not found");
+            ROS_INFO("Fiducial not found");
             m_Result.success = false;
             m_AS.setAborted(m_Result);
             return;
         }
+        ROS_INFO("Fiducial found");
 
         // Successfully docked
         magni_docking_impl::docking_state = magni_docking_impl::Docking_State_Type::docked;
