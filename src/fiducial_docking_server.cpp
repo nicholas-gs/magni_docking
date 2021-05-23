@@ -7,20 +7,23 @@
 
 #include <cmath>
 
-using FSM_SC_States = FSM_State_Controller::States;
+// Forward Declerations
+struct DockingParams;
+class Searching_Params;
+class DockingController;
 
 struct DockingParams {
     DockingParams() {
-        if(!ros::param::get("~docking_position", m_Docking_Position)) {
+        if(!ros::param::get("~docking_position", m_Dock_Position)) {
             ROS_WARN("Docking Position not set, check launch file");
         }
-        if(!ros::param::get("~linear_vel", m_Docking_Position)) {
+        if(!ros::param::get("~linear_vel", m_Linear_Vel)) {
             ROS_WARN("Linear velocity not set, check launch file");
         }
-        if(!ros::param::get("~angular_vel", m_Docking_Position)) {
+        if(!ros::param::get("~angular_vel", m_Angular_Vel)) {
             ROS_WARN("Angular velocity not set, check launch file");
         }
-        if(!ros::param::get("~search_angle", m_Docking_Position)) {
+        if(!ros::param::get("~search_angle", m_Search_Angle)) {
             ROS_WARN("Search angle not set, check launch file");
         }
         if(!ros::param::get("~docking_marker", m_Target_Fid)) {
@@ -33,22 +36,6 @@ struct DockingParams {
     double m_Search_Angle = 0.0;
     int32_t m_Target_Fid;
 };
- 
-struct Handles {
-    Handles(ros::NodeHandle nh, DockingController* dc_ptr)
-        :   m_Dock_Instr(nh.subscribe<std_msgs::String>("docking_command"), 1, 
-                            &DockingController::Docking_Command_Callback, dc_ptr),
-            m_Cmd_Pub(nh.advertise<geometry_msgs::Twist>("cmd_vel", 1)),
-            m_FiducialsTF_Sub(nh.subscribe("fiducial_transforms", 1, 
-                            &DockingController::Fiducial_Transforms_Callback, dc_ptr)),
-            m_TFListener(m_TFBuffer) {}
-
-    ros::Subscriber m_Docking_Command_Sub;
-    ros::Publisher m_Cmd_Pub;
-    ros::Subscriber m_FiducialsTF_Sub;
-    tf2_ros::Buffer m_TFBuffer;
-    tf2_ros::TransformListener m_TFListener;    
-};
 
 // todo - reset this somehow!
 class Searching_Params {
@@ -58,14 +45,14 @@ class Searching_Params {
         geometry_msgs::TransformStamped m_Benchmark_TF;
         geometry_msgs::TransformStamped m_Current_TF;
     private:
-       
-}
+
+};
 
 class FSM_State_Controller {
     public:
         enum class States {
             undocked, searching, centering, approaching, final_approach, docked, failed
-        }
+        };
         FSM_State_Controller() {
             std::string dock_status;
             if(!ros::param::get("/docking_status", dock_status)) {
@@ -86,17 +73,23 @@ class FSM_State_Controller {
             m_Current_State = new_state;
         }
         std::string& errorMsg() {
-            return m_Error_msg;
+            return m_Error_Msg;
         }
     private:
         States m_Current_State;
         std::string m_Error_Msg;
 };
+using FSM_SC_States = FSM_State_Controller::States
 
 class DockingController {
     public:
         DockingController(ros::NodeHandle nh)
-            :   m_Handles(nh, this),
+            :   m_Docking_Command_Sub(nh.subscribe<std_msgs::String>("docking_command", 1,
+                    &DockingController::Docking_Command_Callback, this)),
+                m_Cmd_Pub(nh.advertise<geometry_msgs::Twist>("cmd_vel", 1)),
+                m_FiducialsTF_Sub(nh.subscribe("fiducial_transforms", 1,
+                    &DockingController::Fiducial_Transforms_Callback, this)),
+                m_TFListener(m_TFBuffer),
                 m_FSM_Timer(nh.createTimer(ros::Duration(0.1), &DockingController::Manage_FSM_State, this) {}
 
         // Callback for "docking_command" topic subscriber
@@ -158,10 +151,16 @@ class DockingController {
                     break;
             }
         }
+
     private:
+        ros::Subscriber m_Docking_Command_Sub;
+        ros::Publisher m_Cmd_Pub;
+        ros::Subscriber m_FiducialsTF_Sub;
+        tf2_ros::Buffer m_TFBuffer;
+        tf2_ros::TransformListener m_TFListener;
+
         FSM_State_Controller m_FSM_State_Controller;
         DockingParams m_Docking_Params;
-        Handles m_Handles;
         ros::Timer m_FSM_Timer;
         Searching_Params m_Searching_Params;
 
@@ -179,7 +178,7 @@ class DockingController {
         // Get the transform between the /map and the /base_link coordinate frames
         bool getOdomToBaseLinkTF(geometry_msgs::TransformStamped& ts) {
             try {
-                ts = m_Handles.m_TFBuffer.lookupTransform("odom", "base_link", ros::Time::now(), ros::Duration(0.05));
+                ts = m_TFBuffer.lookupTransform("odom", "base_link", ros::Time::now(), ros::Duration(0.05));
                 return true;
             } catch (tf2::TransformException& exp) {
                 ROS_ERROR("Cannot find transform between '/odom' and 'base_link'");
@@ -200,8 +199,7 @@ class DockingController {
 };
 
 
-
-int main(int argc. char** argv) {
+int main(int argc, char** argv) {
     ros::init(argc, argv, "magni_docking");
     ros::NodeHandle nh;
     return 0;
