@@ -128,15 +128,15 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
-add_executable(fiducial_docking_server src/fiducial_docking_server.cpp)
+add_executable(magni_docking_node src/magni_docking_node.cpp)
 
 target_link_libraries(
-  fiducial_docking_server
+  magni_docking_node
   ${catkin_LIBRARIES}
 )
 
 add_dependencies(
-  fiducial_docking_server
+  magni_docking_node
   ${magni_docking_EXPORTED_TARGETS}
 )
 
