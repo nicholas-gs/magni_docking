@@ -1,231 +1,208 @@
-#include "actionlib/server/simple_action_server.h"
-#include "fiducial_msgs/FiducialTransformArray.h"
-#include "geometry_msgs/Twist.h"
-#include "geometry_msgs/TransformStamped.h"
-#include "geometry_msgs/Quaternion.h"
-#include "tf2_geometry_msgs/tf2_geometry_msgs.h"
-#include "magni_docking/DockingAction.h"
 #include "ros/ros.h"
+#include "std_msgs/String.h"
+#include "geometry_msgs/Twist.h"
+#include "fiducial_msgs/FiducialTransformArray.h"
 #include "tf2_ros/transform_listener.h"
-#include "docking_math.hpp"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.h"
 
-#include <string>
-#include <vector>
 #include <cmath>
 
-namespace magni {
+using FSM_SC_States = FSM_State_Controller::States;
 
-    enum class Docking_State_Type { undocked,
-                                    searching,
-                                    docking,
-                                    docked,
-                                    failed };
-
-    // Keep the internal state of the docking process
-    Docking_State_Type docking_state;
-
-    // Publisher to "/cmd_vel" to control movement
-    ros::Publisher m_CmdPub;
-
-    // Get the "/docking_status" param which tracks the if the robot is currently docked or undocked
-    std::string getDockingStatus() {
-        std::string docking_status;
-        if (!ros::param::get("/docking_status", docking_status)) {
-            ROS_ERROR("Docking status param not found! - Setting to undocked");
-            docking_status = "undocked";
-            ros::param::set("/docking_status", docking_status.c_str());
+struct DockingParams {
+    DockingParams() {
+        if(!ros::param::get("~docking_position", m_Docking_Position)) {
+            ROS_WARN("Docking Position not set, check launch file");
         }
-        return docking_status;
-    }
-
-    // Initilize the publishers and subscribers, should be called in main()
-    void init(ros::NodeHandle& nh) {
-        m_CmdPub = nh.advertise<geometry_msgs::Twist>("cmd_vel", 1);
-        // Initialise the state
-        if (getDockingStatus() == std::string("undocked")) {
-            docking_state = Docking_State_Type::undocked;
-        } else {
-            docking_state = Docking_State_Type::docked;
+        if(!ros::param::get("~linear_vel", m_Docking_Position)) {
+            ROS_WARN("Linear velocity not set, check launch file");
+        }
+        if(!ros::param::get("~angular_vel", m_Docking_Position)) {
+            ROS_WARN("Angular velocity not set, check launch file");
+        }
+        if(!ros::param::get("~search_angle", m_Docking_Position)) {
+            ROS_WARN("Search angle not set, check launch file");
+        }
+        if(!ros::param::get("~docking_marker", m_Target_Fid)) {
+            ROS_WARN("Target fiducial marker not set, check launch file");
         }
     }
+    std::string m_Dock_Position;
+    double m_Angular_Vel = 0.0;
+    double m_Linear_Vel = 0.0;
+    double m_Search_Angle = 0.0;
+    int32_t m_Target_Fid;
+};
+ 
+struct Handles {
+    Handles(ros::NodeHandle nh, DockingController* dc_ptr)
+        :   m_Dock_Instr(nh.subscribe<std_msgs::String>("docking_command"), 1, 
+                            &DockingController::Docking_Command_Callback, dc_ptr),
+            m_Cmd_Pub(nh.advertise<geometry_msgs::Twist>("cmd_vel", 1)),
+            m_FiducialsTF_Sub(nh.subscribe("fiducial_transforms", 1, 
+                            &DockingController::Fiducial_Transforms_Callback, dc_ptr)),
+            m_TFListener(m_TFBuffer) {}
 
-    // Retrieve all the rosparam
-    struct DockingParams {
-        DockingParams() {
-            if(!ros::param::get("~dock_position", m_DockPosition)) {
-                ROS_WARN("Dock position not set, check launch file");
-            }
-            if(!ros::param::get("~linear_vel", m_LinearVel)) {
-                ROS_WARN("Linear velocity not set, check launch file");
-            }
-            if(!ros::param::get("~angular_vel", m_LinearVel)) {
-                ROS_WARN("Linear velocity not set, check launch file");
-            }
-            if(!ros::param::get("~search_angle", m_SearchAngle)) {
-                ROS_WARN("Search angle not set, check launch file");
-            }
-        }
-        std::string m_DockPosition;
-        double m_AngularVel = 0.0;
-        double m_LinearVel = 0.0;
-        double m_SearchAngle = 0.0;
-    };
-
-} // namespace impl
-
-// The business logic of docking the robot
-class DockingController {
-  public:
-    DockingController(int32_t target_fid, ros::NodeHandle& nh)
-        :   m_Target_Fid(target_fid),
-            m_FidTfSub(nh.subscribe("fiducial_transforms", 1, &DockingController::FidTfCallback, this)),
-            m_TFListener(m_TFBuffer) {
-    }
-
-    // Search for the target fiducial
-    bool searchForFiducial() {
-        ROS_INFO("Searching for %d fiducial", m_Target_Fid);
-        // Rotate the robot for a fixed angle or until fiducial is found
-        // Send Twist message to start rotation
-        geometry_msgs::Twist twist;
-        double ang_vel = m_DockingParams.m_AngularVel;
-        // If the dock to the left of the robot, then rotate counterclockwise.
-        twist.angular.z = m_DockingParams.m_DockPosition == std::string("left") ? ang_vel : -1 * ang_vel;
-        magni::m_CmdPub.publish(twist);
-        // Get the current transform between the /map and /base_link frames
-        geometry_msgs::TransformStamped benchmark_tf;
-        getOdomToBaseLinkTF(benchmark_tf);
-        // Maximum rotation in terms of degrees
-        double max_rotation = m_DockingParams.m_SearchAngle;
-        geometry_msgs::TransformStamped current_tf = benchmark_tf;
-        ros::Rate r(0.2);
-        while(!m_Fiducial_Found && (magni::degreesOfRotation(benchmark_tf, current_tf) < max_rotation)) {
-            r.sleep();
-            if(!getOdomToBaseLinkTF(current_tf)) {
-                break;
-            }
-        }
-        twist.angular.z = 0.0;
-        magni::m_CmdPub.publish(twist);
-        // Test only to simulate 360 degree rotation, remove later
-        //ros::Time later = ros::Time::now() + ros::Duration(10);
-        //while ((later - ros::Time::now()).toSec() > 0) {
-        //}
-        return m_Fiducial_Found;
-    }
-
-    // Get the transform between the /map and /base_link frames
-    bool getOdomToBaseLinkTF(geometry_msgs::TransformStamped& ts) {
-        std::string odom = "odom";
-        std::string base_link = "base_link";
-        try {
-            ts = m_TFBuffer.lookupTransform(odom, base_link, ros::Time::now(), ros::Duration(2.0));
-            return true;
-        } catch (tf2::TransformException& exp) {
-            ROS_ERROR("Cannot find transform %s and %s", odom.c_str(), base_link.c_str());
-        }
-        return false;
-    }
-
-  private:
-    // Target fiducial
-    const int32_t m_Target_Fid;
-    // Subscriber to the incoming fiducial transforms
-    ros::Subscriber m_FidTfSub;
-    // Track if the target fiducial has been found
-    bool m_Fiducial_Found = false;
-    // Set up a transform listener
+    ros::Subscriber m_Docking_Command_Sub;
+    ros::Publisher m_Cmd_Pub;
+    ros::Subscriber m_FiducialsTF_Sub;
     tf2_ros::Buffer m_TFBuffer;
-    tf2_ros::TransformListener m_TFListener;
-    // Keep track of the docking params
-    magni::DockingParams m_DockingParams;
+    tf2_ros::TransformListener m_TFListener;    
+};
 
-    // Fiducial Transforms topic subscriber callback
-    void FidTfCallback(const fiducial_msgs::FiducialTransformArray::ConstPtr& msg) {
-        // If we are currently searching for the target fiducial
-        if (magni::docking_state == magni::Docking_State_Type::searching) {
-            search(msg);
+// todo - reset this somehow!
+class Searching_Params {
+    public:
+        bool m_Found = false;
+        geometry_msgs::Twist m_Twist;
+        geometry_msgs::TransformStamped m_Benchmark_TF;
+        geometry_msgs::TransformStamped m_Current_TF;
+    private:
+       
+}
+
+class FSM_State_Controller {
+    public:
+        enum class States {
+            undocked, searching, centering, approaching, final_approach, docked, failed
         }
-    }
-
-    // Iterate through all the FiducialTransforms in the FiducialTransformArray and search for target fiducial
-    void search(const fiducial_msgs::FiducialTransformArray::ConstPtr& msg) {
-        for (std::size_t i = 0; i < (msg->transforms).size(); ++i) {
-            const fiducial_msgs::FiducialTransform& ft = msg->transforms[i];
-            if (ft.fiducial_id == m_Target_Fid) {
-                m_Fiducial_Found = true;
-                break;
+        FSM_State_Controller() {
+            std::string dock_status;
+            if(!ros::param::get("/docking_status", dock_status)) {
+                ROS_ERROR("Docking status not found!");
+            }
+            if(dock_status == "docked") {
+                m_Current_State = States::docked;
+            } else if(dock_status == "undocked") {
+                m_Current_State = States::undocked;
+            } else {
+                ROS_ERROR("Robot is in unknown state!");
             }
         }
-    }
+        States getState() const {
+            return m_Current_State;
+        }
+        void setState(States new_state) {
+            m_Current_State = new_state;
+        }
+        std::string& errorMsg() {
+            return m_Error_msg;
+        }
+    private:
+        States m_Current_State;
+        std::string m_Error_Msg;
 };
 
-// Action Server
-class DockingActionServer {
-  public:
-    DockingActionServer(ros::NodeHandle& nh, const std::string& name)
-        :   m_NH(nh),
-            m_Name(name),
-            m_AS(m_NH, m_Name, boost::bind(&DockingActionServer::goalCallback, this, _1), false) {
-        m_AS.start();
-    }
+class DockingController {
+    public:
+        DockingController(ros::NodeHandle nh)
+            :   m_Handles(nh, this),
+                m_FSM_Timer(nh.createTimer(ros::Duration(0.1), &DockingController::Manage_FSM_State, this) {}
 
-    ~DockingActionServer() {}
-
-  protected:
-    ros::NodeHandle m_NH;
-    // Name of the action server
-    std::string m_Name;
-    actionlib::SimpleActionServer<magni_docking::DockingAction> m_AS;
-    magni_docking::DockingFeedback m_Feedback;
-    magni_docking::DockingResult m_Result;
-
-    // Callback when a goal is received by action server
-    void goalCallback(const magni_docking::DockingGoalConstPtr& goal) {
-        // Check if Magni is already docked. If it is, then do nothing
-        if(magni::getDockingStatus() == std::string("docked")) {
-            ROS_INFO("Magni already docked!");
-            m_Result.success = true;
-            m_AS.setSucceeded(m_Result);
-            return;
-        } else {
-            magni::docking_state = magni::Docking_State_Type::undocked;
+        // Callback for "docking_command" topic subscriber
+        void Docking_Command_Callback(const std_msgs::String::ConstPtr& msg) {
+            if(msg.data == "dock") {
+                if(m_FSM_State_Controller.getState() == FSM_SC_States::docked) {
+                    ROS_INFO("Robot is already docked");
+                } else if(m_FSM_State_Controller.getState() == FSM_SC_States::undocked) {
+                    m_FSM_State_Controller.setState(FSM_SC_States::searching);
+                    // Reset the searching params
+                    m_Searching_Params.m_Found = false;
+                    getOdomToBaseLinkTF(m_Searching_Params.m_Benchmark_TF);
+                }
+            } else if(msg.data == "cancel") {
+                // Cancel current goal
+                FSM_SC_States current_state = m_FSM_State_Controller.getState();
+                if(current_state == FSM_SC_States::docked || current_state == FSM_SC_States::undocked) {
+                    ROS_INFO("%s is not in docking or undocking process", ros::this_node::getName().c_str());
+                } else {
+                    // todo -- cancel current docking or undocking goal
+                }
+            } else {
+                ROS_ERROR("Unknown command to %s node", ros::this_node::getName().c_str());
+            }
         }
-        // Pass of responsibility of docking the robot to the docking controller
-        // Search for the target fiducial
-        const int32_t target_fid = goal->target_fiducial;
-        DockingController dc(target_fid, m_NH);
-        sendFeedback("searching");
-        // If target fiducial could not be found, then abort
-        magni::docking_state = magni::Docking_State_Type::searching;
-        if (!dc.searchForFiducial()) {
-            sendFeedback("Fiducial not found");
-            ROS_INFO("Fiducial not found");
-            m_Result.success = false;
-            m_AS.setAborted(m_Result);
-            return;
+
+        // Callback for "fiducial_transforms" topic subscriber
+        void Fiducial_Transforms_Callback(const fiducial_msgs::FiducialTransformArray::ConstPtr& msg) {
+            if(m_FSM_State_Controller.getState() == FSM_SC_States::searching) && !m_Searching_Params.m_Found) {
+                for(std::size_t i = 0; i < (msg->transforms).size(); ++i) {
+                    const fiducial_msgs::FiducialTransform& ft = msg->transforms[i];
+                    if(ft.fiducial_id == m_Docking_Params.m_Target_Fid) {
+                        m_Searching_Params.m_Found = true;
+                    }
+                }
+            }
         }
-        ROS_INFO("Fiducial found");
 
-        // Successfully docked
-        magni::docking_state = magni::Docking_State_Type::docked;
-        ros::param::set("/docking_status", "docked");
-        m_Result.success = true;
-        m_AS.setSucceeded(m_Result);
-    }
+        // Callback for FSM timer
+        void Manage_FSM_State(const ros::TimerEvent& timer_event) {
+            switch(m_FSM_State_Controller.getState()) {
+                case FSM_SC_States::failed:
+                    ROS_INFO("Docking failed: %s", m_FSM_State_Controller.errorMsg().c_str());
+                    reset(); // todo -- implement a reset function!
+                    break;
+                case FSM_SC_States::undocked:
+                    break;
+                case FSM_SC_States::searching:
+                    if(search_state_func()) {
+                        if(m_Searching_Params.m_Found) {
+                            m_FSM_State_Controller.setState(FSM_SC_States::centering);
+                        } else {
+                            m_FSM_State_Controller.setState(FSM_SC_States::failed);
+                            m_FSM_State_Controller.errorMsg() = "Cannot find fiducial";
+                        }
+                    }
+                    break;
+                case FSM_SC_States::centering:
+                    break;
+            }
+        }
+    private:
+        FSM_State_Controller m_FSM_State_Controller;
+        DockingParams m_Docking_Params;
+        Handles m_Handles;
+        ros::Timer m_FSM_Timer;
+        Searching_Params m_Searching_Params;
 
-    // Publish docking action feedback
-    void sendFeedback(const std::string& feedback) {
-        m_Feedback.status = feedback;
-        m_AS.publishFeedback(m_Feedback);
-    }
+        // Check if the robot's rotation has exceeded the search limit. Return true if so.
+        bool search_state_func() {
+            // todo
+            getOdomToBaseLinkTF(m_Searching_Params.m_Current_TF);
+            double deg = degreesOfRotation(m_Searching_Params.m_Benchmark_TF, m_Searching_Params.m_Current_TF);
+            if(deg < m_Docking_Params.m_Search_Angle) {
+                return false;
+            }
+            return true;
+        }
+
+        // Get the transform between the /map and the /base_link coordinate frames
+        bool getOdomToBaseLinkTF(geometry_msgs::TransformStamped& ts) {
+            try {
+                ts = m_Handles.m_TFBuffer.lookupTransform("odom", "base_link", ros::Time::now(), ros::Duration(0.05));
+                return true;
+            } catch (tf2::TransformException& exp) {
+                ROS_ERROR("Cannot find transform between '/odom' and 'base_link'");
+            }
+            return false;
+        }
+
+        // Calculate the relative degrees of rotation between 2 coordinate frames
+        double degreesOfRotation(const geometry_msgs::TransformStamped& benchmark_tf, const geometry_msgs::TransformStamped& curren_tf) {
+            tf2::Quaternion benchmark_quat, current_quat;
+            tf2::convert(benchmark_tf.transform.rotation, benchmark_quat);
+            tf2::convert(current_tf.transform.rotation, current_quat);
+            tf2::Quaternion diff = benchmark_quat * current_quat.inverse();
+            double roll, pitch, yaw;
+            tf2::Matrix3x3(diff).getRPY(roll, pitch, yaw);
+            return abs(yaw);
+        }
 };
 
-int main(int argc, char** argv) {
+
+
+int main(int argc. char** argv) {
     ros::init(argc, argv, "magni_docking");
     ros::NodeHandle nh;
-    magni::init(nh);
-    DockingActionServer das(nh, "magni_docking");
-    ros::spin();
     return 0;
 }
