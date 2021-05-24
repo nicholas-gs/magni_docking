@@ -117,6 +117,7 @@ class DockingController {
                 if(m_FSM_State_Controller.getState() == FSM_SC_States::docked) {
                     ROS_INFO("Robot is already docked");
                 } else if(m_FSM_State_Controller.getState() == FSM_SC_States::undocked) {
+                    ROS_INFO("Starting docking");
                     m_FSM_State_Controller.setState(FSM_SC_States::searching);
                     // Reset the searching params
                     m_Docking_Params = DockingParams();
@@ -130,6 +131,7 @@ class DockingController {
                     ROS_INFO("%s is not in docking or undocking process", ros::this_node::getName().c_str());
                 } else {
                     // todo -- cancel current docking or undocking goal
+                    ROS_INFO("Cancelling goal");
                     m_FSM_State_Controller.setState(FSM_SC_States::failed);
                     m_FSM_State_Controller.errorMsg() = "Process cancelled";
                 }
@@ -155,6 +157,7 @@ class DockingController {
                     const fiducial_msgs::FiducialTransform& ft = msg->transforms[i];
                     if(ft.fiducial_id == m_Docking_Params.m_Target_Fid) {
                         m_Fid_In_View = true;
+                        m_Last_Fid_TF = ft;
                         return;
                     }
                 }
@@ -173,7 +176,11 @@ class DockingController {
                 case FSM_SC_States::undocked:
                     break;
                 case FSM_SC_States::searching:
-                    if(search_state_func()) {
+                    // todo - clean up this if-elif
+                    if(m_Searching_Params.m_Found) {
+                        m_FSM_State_Controller.setState(FSM_SC_States::centering);
+                    } else if(search_state_func()) {
+                        ROS_INFO("search_state_func() over");
                         if(m_Searching_Params.m_Found) {
                             m_FSM_State_Controller.setState(FSM_SC_States::centering);
                         } else {
@@ -183,6 +190,7 @@ class DockingController {
                     }
                     break;
                 case FSM_SC_States::centering:
+                     ROS_INFO("In centering");
                     if(centering_state_func()) {
                         m_FSM_State_Controller.setState(FSM_SC_States::approaching);
                     }
@@ -217,6 +225,7 @@ class DockingController {
 
         geometry_msgs::Twist m_Twist;
         bool m_Fid_In_View = false;
+        fiducial_msgs::FiducialTransform m_Last_Fid_TF;
 
         // Return true if searching angle is completed
         bool search_state_func() {
@@ -231,13 +240,24 @@ class DockingController {
         bool centering_state_func() {
             ROS_INFO("Centering state");
             // todo -- Maybe set a limit on the number of attempts of centering?
-            geometry_msgs::TransformStamped fid_tf;
-            getOdomToBaseLinkTF(fid_tf);
-            Fid2Pos_Data fid_data = fid2pos(fid_tf);
-            if(abs(fid_data.m_Theta) > fid_data.m_Theta_Bounds) {
-                motion_turn(fid_tf ,fid_data.m_Theta, m_Docking_Params.m_Angular_Vel);
+            // todo -- fix bug!!! Wrong TF
+            if(!m_Fid_In_View) {
+                ROS_WARN("Cannot see fiducial anymore");
+                // motion_stop();
+                motion_forward(m_Docking_Params.m_Linear_Vel);
                 return false;
             }
+            Fid2Pos_Data fid_data = fid2pos(m_Last_Fid_TF);
+            ROS_INFO("theta: %.2lf , theta bounds: %.2lf", fid_data.m_Theta, fid_data.m_Theta_Bounds);
+            if(fabs(fid_data.m_Theta) > fabs(fid_data.m_Theta_Bounds)) {
+                double ang_vel = m_Docking_Params.m_Angular_Vel;
+                if(fid_data.m_Theta > 0.0) {
+                    ang_vel *= -1.0;
+                }
+                motion_turn(ang_vel);
+                return false;
+            }
+            motion_stop();
             return true;
         }
 
@@ -246,21 +266,20 @@ class DockingController {
         // Return true if ready to move to the final approach state
         bool approaching_state_func() {
             ROS_INFO("Approaching state");
-            geometry_msgs::TransformStamped fid_tf;
-            getOdomToBaseLinkTF(fid_tf);
-            Fid2Pos_Data fid_data = fid2pos(fid_tf);
+            Fid2Pos_Data fid_data = fid2pos(m_Last_Fid_TF);
             // If fiducial is not seen at the moment, then stop for the time being
             if(!m_Fid_In_View) {
-                motion_stop();
+                ROS_WARN("Cannot see fiducial anymore");
+             //   motion_stop();
                 return false;
             }
-            if(abs(fid_data.m_Theta) > fid_data.m_Theta_Bounds) {
+            if(fabs(fid_data.m_Theta) > fabs(fid_data.m_Theta_Bounds)) {
                 ROS_INFO("Approach angle exceeding limit");
                 motion_stop();
                 m_FSM_State_Controller.setState(FSM_SC_States::centering);
                 return false;
             }
-            if(abs(fid_data.m_Distance) < m_Docking_Params.m_Final_Approach_Distance) {
+            if(fabs(fid_data.m_Distance) < m_Docking_Params.m_Final_Approach_Distance) {
                 motion_stop();
                 return true;
             } else {
@@ -274,6 +293,7 @@ class DockingController {
         // a fixed distance, also know as the "blind distance"
         // Return true if robot has travelled the "blind distance" required
         bool final_approach_func() {
+            ROS_INFO("Final Approach State");
             return motion_forward(m_Final_Approach_Params.m_Benchmark_TF , m_Docking_Params.m_Blind_Distance,
                                        m_Docking_Params.m_Final_Linear_Vel);
         }
@@ -285,18 +305,29 @@ class DockingController {
             geometry_msgs::TransformStamped curr_tf;
             getOdomToBaseLinkTF(curr_tf);
             double deg = degreesOfRotation(ref_tf, curr_tf);
-            if(abs(deg) < abs(angle)) {
+            ROS_INFO("Rotated %lf / %lf", fabs(deg), fabs(angle));
+            if(fabs(deg) < fabs(angle)) {
+                ROS_INFO("Still need to rotate more");
                 m_Twist.angular.z = ang_vel;
                 m_Cmd_Pub.publish(m_Twist);
                 return false;
             }
+            ROS_INFO("Rotated enough, stopping rotation now");
             motion_stop();
             return true;
         }
 
+        // Rotate at specified angular velocity
+        void motion_turn(double angular_vel) {
+            m_Twist.linear.x = 0.0;
+            m_Twist.angular.z = angular_vel;
+            m_Cmd_Pub.publish(m_Twist);
+        }
+
         // Move forward at specified velocity
         void motion_forward(double linear_vel) {
-            m_Twist.linear.x = abs(linear_vel);
+            m_Twist.angular.z = 0.0;
+            m_Twist.linear.x = fabs(linear_vel);
             m_Cmd_Pub.publish(m_Twist);
         }
 
@@ -305,7 +336,9 @@ class DockingController {
        bool motion_forward(const geometry_msgs::TransformStamped& ref_tf, double distance, double linear_vel) {
             geometry_msgs::TransformStamped curr_tf;
             getOdomToBaseLinkTF(curr_tf);
-            if(distanceApart(ref_tf, curr_tf) < distance) {
+            double travelled_distance = distanceApart(ref_tf, curr_tf);
+            ROS_INFO("Travelled %f / %lf", travelled_distance, distance);
+            if(fabs(travelled_distance) < fabs(distance)) {
                 motion_forward(linear_vel);
                 return false;
             } else {
@@ -324,7 +357,7 @@ class DockingController {
         // Get the transform between the /map and the /base_link coordinate frames
         bool getOdomToBaseLinkTF(geometry_msgs::TransformStamped& ts) {
             try {
-                ts = m_TFBuffer.lookupTransform("odom", "base_link", ros::Time::now(), ros::Duration(0.05));
+                ts = m_TFBuffer.lookupTransform("odom", "base_link", ros::Time(0), ros::Duration(0.05));
                 return true;
             } catch (tf2::TransformException& exp) {
                 ROS_ERROR("Cannot find transform between '/odom' and 'base_link'");

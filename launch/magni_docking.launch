@@ -34,15 +34,15 @@
             name="magni_docking_node" output="screen" respawn="false">
             <!-- Relative position of the dock with respect to the initial position of the robot -->
             <param name="~dock_position" value="left"/>
-            <param name="~linear_vel" value="0.3" type="double"/>
+            <param name="~linear_vel" value="0.5" type="double"/>
             <param name="~final_linear_vel" value="0.1" type="double"/>
             <param name="~angular_vel" value="0.3" type="double"/>
             <param name="~search_angle" value="2.79" type="double"/>
             <param name="~docking_marker" value="49" />
             <!-- Cut off distance before transitioning from "approach" to "final approach" states -->
-            <param name="~final_approach_distance" value="1.0" type="double"/>
+            <param name="~final_approach_distance" value="0.5" type="double"/>
             <!-- In the "final approach" state, how much will the robot move forward by to finally dock -->
-            <param name="~blind_distance" value="0.5" type="double" />
+            <param name="~blind_distance" value="0.3" type="double" />
     </node>
 
     <!-- Only for testing purpose, remove later -->
