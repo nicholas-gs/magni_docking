@@ -3,6 +3,7 @@
 #include "geometry_msgs/Twist.h"
 #include "fiducial_msgs/FiducialTransformArray.h"
 #include "tf2_ros/transform_listener.h"
+#include "tf2_ros/transform_broadcaster.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.h"
 #include "docking_math.hpp"
 
@@ -143,26 +144,20 @@ class DockingController {
         // Callback for "fiducial_transforms" topic subscriber
         void Fiducial_Transforms_Callback(const fiducial_msgs::FiducialTransformArray::ConstPtr& msg) {
             FSM_SC_States current_state = m_FSM_State_Controller.getState();
-            if(current_state == FSM_SC_States::searching && !(m_Searching_Params.m_Found)) {
-                for(std::size_t i = 0; i < (msg->transforms).size(); ++i) {
-                    const fiducial_msgs::FiducialTransform& ft = msg->transforms[i];
-                    if(ft.fiducial_id == m_Docking_Params.m_Target_Fid) {
+            for(std::size_t i = 0; i < (msg->transforms).size(); ++i) {
+                const fiducial_msgs::FiducialTransform& ft = msg->transforms[i];
+                if(ft.fiducial_id == m_Docking_Params.m_Target_Fid) {
+                    broadcast_fid_to_base_link_tf(ft);
+                    if(current_state == FSM_SC_States::searching) {
                         m_Searching_Params.m_Found = true;
-                        return;
-                    }
-                }
-            }
-            if(current_state == FSM_SC_States::centering || current_state == FSM_SC_States::approaching) {
-                for(std::size_t i = 0; i < (msg->transforms).size(); ++i) {
-                    const fiducial_msgs::FiducialTransform& ft = msg->transforms[i];
-                    if(ft.fiducial_id == m_Docking_Params.m_Target_Fid) {
+                    } else if(current_state == FSM_SC_States::centering || current_state == FSM_SC_States::approaching) {
                         m_Fid_In_View = true;
                         m_Last_Fid_TF = ft;
-                        return;
                     }
+                    return;
                 }
-                m_Fid_In_View = false;
             }
+            m_Fid_In_View = false;
         }
 
         // Callback for FSM timer
@@ -216,6 +211,7 @@ class DockingController {
         ros::Subscriber m_FiducialsTF_Sub;
         tf2_ros::Buffer m_TFBuffer;
         tf2_ros::TransformListener m_TFListener;
+        tf2_ros::TransformBroadcaster m_TFBroadcaster;
 
         FSM_State_Controller m_FSM_State_Controller;
         DockingParams m_Docking_Params;
@@ -365,8 +361,17 @@ class DockingController {
             return false;
         }
 
-};
+        void broadcast_fid_to_base_link_tf(const fiducial_msgs::FiducialTransform& ft) {
+            geometry_msgs::TransformStamped ts;
+            ts.header.frame_id = "raspicam";
+            ts.child_frame_id = "fiducial";
+            ts.transform.translation = ft.transform.translation;
+            ts.transform.rotation = ft.transform.rotation;
+            ts.header.stamp = ros::Time::now();
+            m_TFBroadcaster.sendTransform(ts);
+        }
 
+};
 
 int main(int argc, char** argv) {
     ros::init(argc, argv, "magni_docking");
