@@ -11,8 +11,6 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
-  actionlib_msgs
-  actionlib
   geometry_msgs
   tf2
   tf2_ros
@@ -66,19 +64,12 @@ find_package(catkin REQUIRED COMPONENTS
 #   Service2.srv
 # )
 
-## Generate actions in the 'action' folder
-add_action_files(
-   DIRECTORY action
-   FILES Docking.action
-)
-
 ## Generate added messages and services with any dependencies listed here
-generate_messages(
-   DEPENDENCIES
-   std_msgs
-   actionlib_msgs
-   geometry_msgs
-)
+# generate_messages(
+#   DEPENDENCIES
+#   std_msgs
+#   geometry_msgs
+# )
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -112,7 +103,7 @@ generate_messages(
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES magni_docking
-   CATKIN_DEPENDS roscpp rospy std_msgs actionlib actionlib_msgs geometry_msgs
+   CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs
                     tf2 tf2_ros tf2_geometry_msgs
 #  DEPENDS system_lib
 )
@@ -135,7 +126,7 @@ target_link_libraries(
   ${catkin_LIBRARIES}
 )
 
-add_dependencies(
-  magni_docking_node
-  ${magni_docking_EXPORTED_TARGETS}
-)
+#add_dependencies(
+#  magni_docking_node
+#  ${magni_docking_EXPORTED_TARGETS}
+#)

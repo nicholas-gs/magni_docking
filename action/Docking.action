@@ -1,8 +1,0 @@
-#goal definition
-int32 target_fiducial
----
-#result definition
-bool success
----
-#feedback
-string status
