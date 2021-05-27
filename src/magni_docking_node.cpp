@@ -164,6 +164,7 @@ class DockingController {
         void Manage_FSM_State(const ros::TimerEvent& timer_event) {
             switch(m_FSM_State_Controller.getState()) {
                 case FSM_SC_States::failed:
+                    motion_stop();
                     ROS_INFO("Docking failed: %s", m_FSM_State_Controller.errorMsg().c_str());
                     // Reset the FSM state controller
                     m_FSM_State_Controller = FSM_State_Controller();
