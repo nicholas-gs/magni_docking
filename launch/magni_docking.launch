@@ -45,10 +45,4 @@
             <param name="~blind_distance" value="0.3" type="double" />
     </node>
 
-    <!-- Only for testing purpose, remove later -->
-     <!-- <node pkg="magni_docking" type="fiducial_docking_client"
-            name="fiducial_docking_client" output="screen" respawn="false"
-            launch-prefix="bash -c 'sleep 5.0; $0 $@'">
-     </node> -->
-
 </launch>

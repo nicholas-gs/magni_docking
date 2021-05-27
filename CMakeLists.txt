@@ -139,16 +139,3 @@ add_dependencies(
   magni_docking_node
   ${magni_docking_EXPORTED_TARGETS}
 )
-
-
-add_executable(fiducial_docking_client src/fiducial_docking_client.cpp)
-
-target_link_libraries(
-  fiducial_docking_client
-  ${catkin_LIBRARIES}
-)
-
-add_dependencies(
-  fiducial_docking_client
-  ${magni_docking_EXPORTED_TARGETS}
-)
